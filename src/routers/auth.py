@@ -4,12 +4,13 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from models import User, User_Pydantic, UserIn_Pydantic
+from models import User, User_Pydantic, UserIn_Pydantic, Subscription_Pydantic
 from tortoise.exceptions import DoesNotExist
-import os
+from typing import Optional
+from config import APIConfig
 
 
-JWT_SECRET_KEY = os.environ.get('SHORTDIARY_SECRET', 'insecure-changeme')
+JWT_SECRET_KEY = APIConfig().jwt_secret
 JWT_ALGORITHM = 'HS256'
 JWT_TOKEN_LIFETIME = {'days': 4}
 
@@ -42,6 +43,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 	return user
 
 
+async def get_subscribed_user(token: str = Depends(oauth2_scheme)):
+	user = await get_current_user(token)
+	if not await user.has_active_subscription():
+		raise HTTPException(
+			status_code=status.HTTP_402_PAYMENT_REQUIRED,
+			detail='You need an active subscription to perform this action.')
+
+	return user
+
+
 def create_access_token(user):
 	data = {
 		'sub': str(user.id),
@@ -50,9 +61,13 @@ def create_access_token(user):
 	return jwt.encode(data, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
+class UserResponse(User_Pydantic):
+	subscription: Optional[Subscription_Pydantic]
+
+
 class LoginResponse(BaseModel):
 	access_token: str
-	user: User_Pydantic
+	user: UserResponse
 
 
 @router.post('/login', response_model=LoginResponse)
@@ -84,7 +99,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 	return {
 		'access_token': create_access_token(user),
-		'user': await User_Pydantic.from_tortoise_orm(user),
+		'user': await UserResponse.from_tortoise_orm(user),
 		'ephemeral_key_salt': user.ephemeral_key_salt,
 		'master_key': user.master_key,
 		'master_key_nonce': user.master_key_nonce,
@@ -125,15 +140,15 @@ async def signup(user: SignupData):
 
 	user.password = pwd_context.hash(user.password)
 	user = await User.create(**user.dict(exclude_unset=True))
-	return await User_Pydantic.from_tortoise_orm(user)
+	return await UserResponse.from_tortoise_orm(user)
 
 
-@router.get('/user', response_model=User_Pydantic)
+@router.get('/user', response_model=UserResponse)
 async def get_user(user: User = Depends(get_current_user)):
-	return await User_Pydantic.from_tortoise_orm(user)
+	return await UserResponse.from_tortoise_orm(user)
 
 
-@router.put('/user', response_model=User_Pydantic)
+@router.put('/user', response_model=UserResponse)
 async def update_user(user_data: UserIn_Pydantic, user: User = Depends(get_current_user)):
 	user_data.email = user_data.email.lower()
 	if user_data.email != user.email and await User.get(email=user_data.email).exists():
@@ -143,4 +158,4 @@ async def update_user(user_data: UserIn_Pydantic, user: User = Depends(get_curre
 		)
 
 	await User.filter(id=user.id).update(**user_data.dict(exclude_unset=True))
-	return await User_Pydantic.from_queryset_single(User.get(id=user.id))
+	return await UserResponse.from_queryset_single(User.get(id=user.id))

@@ -26,11 +26,20 @@ class User(Model):
 	# Old Django username for users that have not logged in since the migration
 	legacy_username = fields.CharField(max_length=255, null=True, unique=True)
 
+	stripe_id = fields.CharField(max_length=255, null=True, index=True)
+
 	class PydanticMeta:
-		exclude = ('password', 'legacy_username', 'joined', 'last_seen')
+		exclude = ('password', 'legacy_username', 'joined', 'last_seen', 'stripe_id',
+			'stripe_intent_id')
 
 	def __str__(self):
-		return self.name
+		return self.email
+
+	async def has_active_subscription(self):
+		await self.fetch_related('subscription')
+		if self.subscription and self.subscription.status == 'active':
+			return True
+		return False
 
 
 User_Pydantic = pydantic_model_creator(User, name='User')
@@ -67,3 +76,28 @@ class Post(Model):
 
 Post_Pydantic = pydantic_model_creator(Post, name='Post')
 PostIn_Pydantic = pydantic_model_creator(Post, name='PostIn', exclude_readonly=True)
+
+
+class Subscription(Model):
+	id = fields.UUIDField(pk=True)
+	user = fields.OneToOneField('models.User', related_name='subscription',
+		on_delete=fields.CASCADE, index=True)
+
+	stripe_id = fields.CharField(max_length=255, null=True, index=True)
+	status = fields.CharField(max_length=255)
+
+	plan = fields.CharField(max_length=100)
+	plan_name = fields.CharField(max_length=500)
+
+	last_changed = fields.DatetimeField(auto_now=True)
+	start_time = fields.DatetimeField(auto_now_add=True)
+	end_time = fields.DatetimeField(null=True)
+
+	class PydanticMeta:
+		exclude = ('user', 'stripe_id', 'last_changed')
+
+	def __str__(self):
+		return f'Subscription {self.id} ({self.status}) [{self.stripe_id}]'
+
+
+Subscription_Pydantic = pydantic_model_creator(Subscription, name='Subscription')
