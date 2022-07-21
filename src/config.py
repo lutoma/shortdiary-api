@@ -21,6 +21,7 @@ class StripeConfig(ConfZ):
 
 class APIConfig(ConfZ):
     database: str
+    frontend_url: str
     cors_origins: List[AnyUrl]
     jwt_secret: str
     stripe: StripeConfig
