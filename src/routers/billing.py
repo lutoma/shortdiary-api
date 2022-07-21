@@ -38,8 +38,8 @@ async def subscribe(user: User = Depends(get_current_user)):
 				},
 			],
 			mode='subscription',
-			success_url='http://localhost:3000/settings',
-			cancel_url='http://localhost:3000/settings',
+			success_url=f'{APIConfig().frontend_url}/settings',
+			cancel_url=f'{APIConfig().frontend_url}/settings',
 		)
 	except Exception as e:
 		return SubscribeStatus(message=repr(e))
@@ -60,7 +60,7 @@ async def portal(user: User = Depends(get_current_user)):
 
 	try:
 		portal_session = stripe.billing_portal.Session.create(customer=user.stripe_id,
-			return_url='http://localhost:3000')
+			return_url=f'{APIConfig().frontend_url}/settings')
 		print(portal_session)
 		print(portal_session.url)
 

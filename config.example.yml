@@ -1,3 +1,4 @@
+frontend_url: 'http://localhost:3000'
 cors_origins: ['http://localhost:3000']
 database: sqlite://db.sqlite3
 jwt_secret: insecure-changeme

@@ -1,6 +1,6 @@
 from pathlib import Path
+from os import environ
 from typing import List
-
 from confz import ConfZ, ConfZFileSource
 from pydantic import AnyUrl
 
@@ -19,4 +19,5 @@ class APIConfig(ConfZ):
     jwt_secret: str
     stripe: StripeConfig
 
-    CONFIG_SOURCES = ConfZFileSource(file=CONFIG_DIR / 'config.yml')
+    CONFIG_SOURCES = ConfZFileSource(file=environ.get(
+        'SHORTDIARY_CONFIG', CONFIG_DIR / 'config.yml'))
