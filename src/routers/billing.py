@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends, Request, Header
+from fastapi import APIRouter, Depends, Request, Header, HTTPException
 from models import User, Subscription
-from typing import Optional
 from pydantic import BaseModel
 from tortoise.exceptions import DoesNotExist
 from .auth import get_current_user
@@ -11,26 +10,36 @@ stripe.api_key = APIConfig().stripe.api_key
 router = APIRouter()
 
 
-class SubscribeStatus(BaseModel):
-	message: str
-	session_url: Optional[str]
+class StripeRedirectResponse(BaseModel):
+	session_url: str
 
 
-@router.post('/subscribe', response_model=SubscribeStatus)
-async def subscribe(user: User = Depends(get_current_user)):
-	print('user', user)
+async def get_stripe_id(user):
 	if not user.stripe_id:
 		try:
 			stripe_customer = stripe.Customer.create(email=user.email)
-		except Exception as e:
-			return SubscribeStatus(message=repr(e))
+		except Exception:
+			raise HTTPException(status_code=500, detail='Stripe request failed')
 
 		user.stripe_id = stripe_customer.id
 		await user.save()
 
+	return user.stripe_id
+
+
+@router.post('/subscribe', response_model=StripeRedirectResponse)
+async def subscribe(user: User = Depends(get_current_user)):
+	await user.fetch_related('subscription')
+	if all((user.subscription, user.subscription.status == 'active',
+		user.subscription.plan != 'earlyadopter')):
+
+		raise HTTPException(status_code=422, detail='User already has an active subscription')
+
+	stripe_id = await get_stripe_id(user)
+
 	try:
 		checkout_session = stripe.checkout.Session.create(
-			customer=user.stripe_id,
+			customer=stripe_id,
 			line_items=[
 				{
 					'price': APIConfig().stripe.price,
@@ -41,34 +50,23 @@ async def subscribe(user: User = Depends(get_current_user)):
 			success_url=f'{APIConfig().frontend_url}/settings',
 			cancel_url=f'{APIConfig().frontend_url}/settings',
 		)
-	except Exception as e:
-		return SubscribeStatus(message=repr(e))
+	except Exception:
+		raise HTTPException(status_code=500, detail='Stripe request failed')
 
-	return SubscribeStatus(message='ok', session_url=checkout_session.url)
+	return StripeRedirectResponse(session_url=checkout_session.url)
 
 
-@router.post('/portal', response_model=SubscribeStatus)
+@router.post('/portal', response_model=StripeRedirectResponse)
 async def portal(user: User = Depends(get_current_user)):
-	if not user.stripe_id:
-		try:
-			stripe_customer = stripe.Customer.create(email=user.email)
-		except Exception as e:
-			return SubscribeStatus(message=repr(e))
-
-		user.stripe_id = stripe_customer.id
-		await user.save()
+	stripe_id = await get_stripe_id(user)
 
 	try:
-		portal_session = stripe.billing_portal.Session.create(customer=user.stripe_id,
+		portal_session = stripe.billing_portal.Session.create(customer=stripe_id,
 			return_url=f'{APIConfig().frontend_url}/settings')
-		print(portal_session)
-		print(portal_session.url)
+	except Exception:
+		raise HTTPException(status_code=500, detail='Stripe request failed')
 
-	except Exception as e:
-		print(e)
-		return SubscribeStatus(message=repr(e))
-
-	return SubscribeStatus(message='ok', session_url=portal_session.url)
+	return StripeRedirectResponse(session_url=portal_session.url)
 
 
 @router.post('/stripe-webhook', include_in_schema=False)
@@ -76,23 +74,21 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
 	data = await request.body()
 
 	try:
-		event = stripe.Webhook.construct_event(
-			payload=data,
-			sig_header=stripe_signature,
-			secret=APIConfig().stripe.webhook_secret
-		)
+		event = stripe.Webhook.construct_event(payload=data, sig_header=stripe_signature,
+			secret=APIConfig().stripe.webhook_secret)
 
 		event_data = event['data']['object']
 	except Exception as e:
-		return {'error': str(e)}
+		raise HTTPException(status_code=500, detail=str(e))
 
 	if event['type'] not in ('customer.subscription.updated', 'customer.subscription.deleted'):
-		return {"status": "success"}
+		raise HTTPException(status_code=422,
+			detail='Unhandled event type')
 
 	try:
 		user = await User.get(stripe_id=event_data['customer'])
 	except DoesNotExist:
-		return {'error': 'No user with stripe id'}
+		raise HTTPException(status_code=404, detail='No user with this stripe id')
 
 	await user.fetch_related('subscription')
 
@@ -117,4 +113,4 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
 		if user.subscription:
 			await user.subscription.delete()
 
-	return {"status": "success"}
+	return {'status': 'success'}
