@@ -47,8 +47,8 @@ async def subscribe(user: User = Depends(get_current_user)):
 				},
 			],
 			mode='subscription',
-			success_url=f'{APIConfig().frontend_url}/settings',
-			cancel_url=f'{APIConfig().frontend_url}/settings',
+			success_url=f'{APIConfig().frontend_url}/settings/billing',
+			cancel_url=f'{APIConfig().frontend_url}/settings/billing',
 		)
 	except Exception:
 		raise HTTPException(status_code=500, detail='Stripe request failed')
@@ -62,7 +62,7 @@ async def portal(user: User = Depends(get_current_user)):
 
 	try:
 		portal_session = stripe.billing_portal.Session.create(customer=stripe_id,
-			return_url=f'{APIConfig().frontend_url}/settings')
+			return_url=f'{APIConfig().frontend_url}/settings/billing')
 	except Exception:
 		raise HTTPException(status_code=500, detail='Stripe request failed')
 
